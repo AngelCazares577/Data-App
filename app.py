@@ -1,3 +1,4 @@
+import os
 import dash
 from dash import dcc, html, Input, Output, State
 import dash_bootstrap_components as dbc
@@ -98,6 +99,7 @@ def update_output(content, filename):
         # Preprocess
         df = preprocess_df(df0)
         df_store['df'] = df
+        df_store['df_pre'] = df0
 
         rows, cols = df.shape
         return html.Div([
@@ -110,12 +112,12 @@ def update_output(content, filename):
 # Show target variable dropdown after upload
 @app.callback(
     Output('target-selector-container', 'children'),
-    Input('upload-data', 'contents')
+    Input('output-data-upload', 'children')
 )
 def display_target_selector(content):
     if 'df' not in df_store:
         return ''
-    options = [ {'label': c, 'value': c} for c in df_store['df'].select_dtypes(include=[np.number]).columns]
+    options = df_store['num_cols']
     return html.Div([
         html.Label('Choose target variable:'),
         dcc.Dropdown(id='target-dropdown', options=options, placeholder='Select a column')
@@ -136,6 +138,7 @@ def update_app(target_col):
         return '', empty_fig, empty_fig, '', ''
 
     df = df_store['df']
+    df0 = df_store['df_pre']
     df_store['target'] = target_col
 
     # Small unique numeric cols as categories
@@ -151,14 +154,14 @@ def update_app(target_col):
 
     # Average target by category
     if default_cat:
-        avg_df = df.groupby(default_cat)[target_col].mean().reset_index()
+        avg_df = df0.groupby(default_cat)[target_col].mean().reset_index()
         avg_fig = px.bar(avg_df, x=default_cat, y=target_col, title=f'Avg {target_col} by {default_cat}')
         avg_fig.update_traces(text=round(avg_df[target_col], 2), textposition='outside')
     else:
         avg_fig = empty_fig
 
     # Correlation with target
-    corr_df = df[num_cols].corr()[target_col].drop(target_col).abs().reset_index()
+    corr_df = df0[df_store['num_cols']].corr()[target_col].drop(target_col).abs().reset_index()
     corr_df.columns = ['Feature', 'Corr']
     corr_fig = px.bar(corr_df, x='Feature', y='Corr', title=f'Correlation with {target_col}')
     corr_fig.update_traces(text=round(corr_df['Corr'], 2), textposition='outside')
@@ -206,23 +209,23 @@ def train_model(n_clicks, selected_features):
     Output('predict-output', 'children'),
     Input('predict-button', 'n_clicks'),
     State('predict-input', 'value'),
+    State('feature-checklist', 'value'),
     prevent_initial_call=True
 )
-def predict_target(n_clicks, value):
+def predict_target(n_clicks, value, selected_features):
     model = df_store.get('model')
     if not model:
         return 'Train model first.'
-    try:
-        vals = [float(x) for x in value.split(',')]
-    except ValueError:
-        return 'Invalid format.'
-
-    feat = df_store['features']
-    if len(vals) != len(feat):
-        return f'Expected {len(feat)} values.'
-
-    prediction = model.predict(np.array(vals).reshape(1, -1))[0]
+    vals = value.split(',')
+    if len(vals) != len(selected_features):
+        return f'Expected {len(selected_features)} values.'
+    input_df = pd.DataFrame([vals], columns=selected_features)
+    prediction = model.predict(input_df)[0]
     return f"Predicted {df_store['target']}: {prediction:.3f}"
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run_server(
+        host='0.0.0.0',
+        port=int(os.environ.get('PORT', 10000)),
+        debug=True
+    )
